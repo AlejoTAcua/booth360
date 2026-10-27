@@ -1,0 +1,16 @@
+{
+  "name": "Booth 360",
+  "short_name": "Booth 360",
+  "description": "Grabación y edición para plataforma 360: velocidades, efectos, texto y música.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#14101f",
+  "theme_color": "#14101f",
+  "lang": "es",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

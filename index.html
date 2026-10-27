@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Booth 360</title>
+<meta name="theme-color" content="#14101f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Booth 360">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/fonts.css">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<!-- ============ INICIO ============ -->
+<section id="screen-home" class="screen active">
+  <header class="top">
+    <h1>Booth 360</h1>
+    <button class="icon" id="btnSettings" title="Configuración">⚙︎</button>
+  </header>
+  <div class="content">
+    <label class="field">
+      <span>Nombre del evento</span>
+      <input id="eventName" type="text" placeholder="Ej: 15 de Dana">
+    </label>
+    <div class="field profiles">
+      <span>Perfil del evento (texto, marca, música, velocidades y efectos)</span>
+      <div class="row prow"><select id="profileSel"></select><button id="btnProfileSave" class="btn small">Guardar</button><button id="btnProfileDel" class="btn small danger">Borrar</button></div>
+    </div>
+    <button id="btnGoRecord" class="btn primary big">● Grabar 360</button>
+    <div id="summary" class="card muted"></div>
+    <div class="row">
+      <button id="btnGallery" class="btn">Galería</button>
+      <button id="btnPreviewHome" class="btn">Previsualizar</button>
+    </div>
+    <div id="supportWarn" class="warn hidden"></div>
+    <p class="muted small" id="homeHint">Consejo: agregá esta página a la pantalla de inicio (Compartir → “Agregar a inicio”) para usarla como app a pantalla completa.</p>
+  </div>
+</section>
+
+<!-- ============ GRABAR ============ -->
+<section id="screen-record" class="screen dark">
+  <video id="cam" autoplay playsinline muted></video>
+  <canvas id="renderCanvas" class="hidden"></canvas>
+  <div id="recOverlay">
+    <div id="recCenter"></div>
+    <div id="recBar"><div id="recBarFill"></div></div>
+    <div id="recStatus"></div>
+  </div>
+  <button class="icon floating tl" id="btnRecBack">✕</button>
+  <button class="icon floating tr" id="btnFlip" title="Cambiar cámara">⟲</button>
+  <button class="floating motion-toggle" id="btnMotion" title="Empezar al girar la plataforma" hidden></button>
+  <div id="camInfo" class="floating bl small"></div>
+  <button id="btnShutter" title="Grabar"></button>
+</section>
+
+<!-- ============ RESULTADO ============ -->
+<section id="screen-result" class="screen dark">
+  <video id="resultVideo" controls playsinline loop></video>
+  <div id="resultInfo" class="small muted"></div>
+  <div class="actions">
+    <button id="btnShare" class="btn primary">Guardar en Fotos / Compartir</button>
+    <button id="btnSaveOriginal" class="btn">Guardar original (comprimido)</button>
+    <button id="btnAgain" class="btn">Grabar otro</button>
+    <button id="btnResultBack" class="btn ghost">Volver</button>
+  </div>
+</section>
+
+<!-- ============ CONFIGURACIÓN ============ -->
+<section id="screen-settings" class="screen">
+  <header class="top">
+    <button class="icon" id="btnSettingsBack">‹</button>
+    <h1>Configuración</h1>
+    <span></span>
+  </header>
+  <div class="content">
+
+    <details class="card" open>
+      <summary>1. Velocidades (línea de tiempo)</summary>
+      <div class="chips" id="presetChips"></div>
+      <div id="segments"></div>
+      <button id="btnAddSegment" class="btn small">+ Agregar tramo</button>
+      <label class="switch"><input type="checkbox" id="tlReverse"><span>Reverso: reproducir todo hacia adelante y luego hacia atrás</span></label>
+      <label class="switch"><input type="checkbox" id="tlSmooth"><span>Suavizar cámara lenta (mezcla entre cuadros)</span></label>
+      <div class="muted small" id="tlInfo"></div>
+    </details>
+
+    <details class="card">
+      <summary>2. Video de prueba</summary>
+      <p class="muted small">Previsualizá cómo queda la edición con la última grabación o con un video que elijas de Archivos.</p>
+      <div class="row">
+        <button id="btnPreview" class="btn primary">Previsualizar</button>
+        <label class="btn file">Elegir video de prueba<input type="file" id="testVideoFile" accept="video/*" hidden></label>
+      </div>
+      <div class="muted small" id="testVideoInfo"></div>
+    </details>
+
+    <details class="card">
+      <summary>3. Efectos animados y filtro de color</summary>
+      <div class="chips" id="effectChips"></div>
+      <label class="field"><span>Intensidad</span><input type="range" id="fxIntensity" min="1" max="3" step="1"></label>
+      <div class="field"><span>Filtro de color (solo la imagen; el texto y los efectos no cambian)</span><div class="chips" id="lookChips"></div></div>
+      <label class="field"><span>Color (corazones)</span><input type="color" id="fxColor"></label>
+    </details>
+
+    <details class="card">
+      <summary>4. Texto superpuesto</summary>
+      <div class="chips" id="overlayModeChips"></div>
+      <div id="overlayText">
+        <label class="field"><span>Texto (podés usar varias líneas)</span><textarea id="ovText" rows="2"></textarea></label>
+        <label class="field"><span>Emoji arriba del texto (opcional)</span><input type="text" id="ovEmoji" placeholder="👑"></label>
+        <label class="field"><span>Fuente</span><select id="ovFont"></select></label>
+        <label class="field"><span>Tamaño</span><input type="range" id="ovSize" min="40" max="260" step="2"></label>
+        <label class="field"><span>Color</span><input type="color" id="ovColor"></label>
+        <label class="switch"><input type="checkbox" id="ovShadow"><span>Sombra</span></label>
+        <label class="switch"><input type="checkbox" id="ovStroke"><span>Borde oscuro</span></label>
+        <p class="muted small">Arrastrá el texto en la vista previa para ubicarlo.</p>
+      </div>
+      <div id="overlayImage" class="hidden">
+        <label class="btn file">Elegir PNG transparente (720×1280)<input type="file" id="ovImageFile" accept="image/png,image/webp" hidden></label>
+        <div class="muted small" id="ovImageInfo"></div>
+      </div>
+      <canvas id="ovPreview" width="270" height="480"></canvas>
+      <div class="endcard">
+        <label class="switch"><input type="checkbox" id="ecOn"><span>Placa final al terminar el video (tu logo o la marca del evento)</span></label>
+        <label class="btn file">Elegir imagen de la placa final (PNG o JPG, vertical)<input type="file" id="ecFile" accept="image/png,image/jpeg,image/webp" hidden></label>
+        <div class="muted small" id="ecInfo"></div>
+        <label class="field"><span>Duración de la placa final (segundos)</span><input type="range" id="ecSeconds" min="1" max="4" step="0.5"></label>
+      </div>
+    </details>
+
+    <details class="card">
+      <summary>5. Música</summary>
+      <p class="muted small">Agregá canciones completas: la app usa solo el tramo que marques, con la duración exacta del video final.</p>
+      <label class="btn file">+ Agregar canción<input type="file" id="musicFile" accept="audio/*" multiple hidden></label>
+      <div id="musicList"></div>
+      <div class="chips" id="musicModeChips"></div>
+      <label class="switch"><input type="checkbox" id="musicBeat"><span>Cambios de velocidad al ritmo de la música (busca el pulso de la canción y corre un poco cada cambio para que caiga sobre un golpe)</span></label>
+      <label class="switch"><input type="checkbox" id="musicFadeIn"><span>Entrada suave</span></label>
+      <label class="switch"><input type="checkbox" id="musicFadeOut"><span>Bajar el volumen al final</span></label>
+    </details>
+
+    <details class="card">
+      <summary>6. Grabación y salida</summary>
+      <label class="field"><span>Duración de la grabación (segundos)</span><input type="range" id="capSeconds" min="5" max="30" step="1"></label>
+      <label class="field"><span>Cuenta regresiva antes de grabar</span><input type="range" id="capCountdown" min="0" max="10" step="1"></label>
+      <label class="field"><span>Texto antes de grabar</span><input type="text" id="capReady"></label>
+      <label class="switch"><input type="checkbox" id="capMotion"><span>Empezar a grabar al girar la plataforma (usa los sensores del iPhone)</span></label>
+      <label class="field" id="capMotionSensBox"><span>Sensibilidad del giro</span>
+        <select id="capMotionSens"><option value="baja">Baja (giro rápido)</option><option value="media">Media</option><option value="alta">Alta (giro lento)</option></select></label>
+      <p class="small muted">Si el sensor arranca solo o no arranca, apagalo acá o con el botón 🔄 de la pantalla de grabar: el botón rojo sigue funcionando siempre.
+        Control Bluetooth: un control tipo teclado o de presentaciones (Enter, espacio, flechas o Página arriba/abajo) empieza la grabación, y si lo apretás mientras graba, la corta antes.</p>
+      <label class="field"><span>Cuadros por segundo de cámara</span>
+        <select id="capFps"><option value="30">30 fps</option><option value="60">60 fps (si el iPhone lo permite)</option></select></label>
+      <label class="field"><span>Resolución de cámara</span>
+        <select id="capRes"><option value="720">720p (recomendado)</option><option value="1080">1080p</option></select></label>
+      <label class="field"><span>Resolución del video final</span>
+        <select id="outRes"><option value="720">720×1280</option><option value="1080">1080×1920</option></select></label>
+      <p class="small muted">Elegí la misma resolución que la cámara: 1080 desde una cámara en 720p solo agranda la imagen (sale más blanda y pesa más).</p>
+      <label class="field"><span>Calidad del video final (Mbps)</span><input type="range" id="outMbps" min="2" max="12" step="1"></label>
+      <label class="switch"><input type="checkbox" id="outSaveGallery"><span>Guardar el video editado en la galería de la app</span></label>
+      <label class="switch"><input type="checkbox" id="outSaveOriginal"><span>Guardar también el original comprimido en la galería</span></label>
+      <label class="field"><span>Calidad del original comprimido (Mbps)</span><input type="range" id="outOrigMbps" min="1" max="8" step="1"></label>
+      <label class="switch"><input type="checkbox" id="outAutoShare"><span>Abrir “Compartir” automáticamente al terminar</span></label>
+    </details>
+
+    <details class="card">
+      <summary>Estado del dispositivo</summary>
+      <div id="deviceInfo" class="small"></div>
+    </details>
+  </div>
+</section>
+
+<!-- ============ GALERÍA ============ -->
+<section id="screen-gallery" class="screen">
+  <header class="top">
+    <button class="icon" id="btnGalleryBack">‹</button>
+    <h1>Galería</h1>
+    <span></span>
+  </header>
+  <div class="content">
+    <div id="storageInfo" class="muted small"></div>
+    <div id="galleryList"></div>
+  </div>
+</section>
+
+<div id="toast" class="hidden"></div>
+<div id="busy" class="hidden"><div class="box"><div id="busyText">Procesando…</div><div class="bar"><div id="busyFill"></div></div><button id="btnBusyCancel" class="btn small ghost hidden">Cancelar</button></div></div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

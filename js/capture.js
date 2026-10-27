@@ -87,21 +87,35 @@ export async function recordClip(video, { seconds = 15, fps = 30, onProgress, on
   await output.start();
 
   // Canvas de respaldo si el navegador no permite VideoFrame directo desde <video>.
+  // En el iPhone el cuadro de la cámara viene "acostado" (como lo lee el sensor) con una marca de giro que el
+  // codificador no aplica: grabado así, al editar el video salía girado. Si el cuadro viene girado, o la cámara
+  // cambia de tamaño en medio de la grabación (el teléfono pasó a horizontal), se dibuja en el canvas tal como se ve.
   let useCanvas = false;
   let cv = null, cctx = null;
   const makeSample = (ts) => {
     if (!useCanvas) {
+      let vf = null;
       try {
-        return new VideoSample(video, { timestamp: ts, duration: 1 / fps });
+        vf = new VideoFrame(video, { timestamp: Math.round(ts * 1e6), duration: Math.round(1e6 / fps) });
       } catch (e) {
+        useCanvas = true;
+      }
+      if (vf) {
+        const straight = !(vf.rotation || 0) && !vf.flip && Math.abs(vf.codedWidth - width) <= 2 && Math.abs(vf.codedHeight - height) <= 2;
+        if (straight) return new VideoSample(vf, { timestamp: ts, duration: 1 / fps });
+        vf.close();
         useCanvas = true;
       }
     }
     if (!cv) {
       cv = document.createElement('canvas'); cv.width = width; cv.height = height;
-      cctx = cv.getContext('2d', { alpha: false, desynchronized: true });
+      cctx = cv.getContext('2d', { alpha: false });
     }
-    cctx.drawImage(video, 0, 0, width, height);
+    // Cubre el cuadro sin estirar (si la cámara pasó a horizontal, se recorta el centro).
+    const iw = video.videoWidth || width, ih = video.videoHeight || height;
+    const s = Math.max(width / iw, height / ih);
+    const sw = width / s, sh = height / s;
+    cctx.drawImage(video, (iw - sw) / 2, (ih - sh) / 2, sw, sh, 0, 0, width, height);
     return new VideoSample(cv, { timestamp: ts, duration: 1 / fps });
   };
 

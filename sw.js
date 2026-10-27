@@ -1,7 +1,7 @@
 // Service worker: la app funciona sin conexión una vez cargada.
 // Abre desde la caché al instante (aunque el Wi-Fi del salón no tenga internet) y se actualiza por detrás:
 // la versión nueva se usa la próxima vez que se abre. Para publicar cambios, subí VERSION.
-const VERSION = 'booth360-v5';
+const VERSION = 'booth360-v6';
 const SHELL = [
   './', './index.html', './css/app.css', './css/fonts.css', './manifest.webmanifest',
   './js/app.js', './js/capture.js', './js/render.js', './js/effects.js', './js/overlay.js', './js/audio.js', './js/db.js', './js/settings.js', './js/beats.js',

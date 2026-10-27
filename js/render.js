@@ -11,7 +11,7 @@ import { pickVideoCodec } from './capture.js';
 import { buildMusicBuffer, decodeAudio, encodeAacInto, preparePassthrough, aacSupported } from './audio.js';
 import { detectBeats } from './beats.js';
 
-class FrameSource {
+export class FrameSource {
   constructor(input, track, sink, fps, duration) {
     this.input = input; this.track = track; this.sink = sink; this.fps = fps; this.duration = duration;
     this.count = Math.max(1, Math.round(duration * fps));

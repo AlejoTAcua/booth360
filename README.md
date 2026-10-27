@@ -41,6 +41,9 @@ Para probar en una computadora: `python3 -m http.server 8787` dentro de la carpe
 
 ## Novedades (octubre 2026)
 
+- **Video girado en el iPhone, arreglado**: el iPhone entrega los cuadros de la cámara acostados (como los lee el
+  sensor) con una marca de giro; antes se grababan así y el video editado salía girado. Ahora se graban tal como se
+  ven en pantalla, y si el teléfono pasa a horizontal en medio de la grabación el clip sigue vertical.
 - **Al ritmo de la música** (Configuración → 5, prendido de fábrica): la app busca el pulso de la canción (el bombo,
   las palmas) y corre un poco cada cambio de velocidad y el final del video para que caigan justo sobre un golpe
   (cada borde se mueve como mucho un 30 % de su tramo). Si la canción no tiene un pulso claro (un tema lento, sin
@@ -124,6 +127,8 @@ La sección **Estado del dispositivo** muestra qué funciones soporta el navegad
 
 En esta PC, sin instalar nada (desde la carpeta de la app, con `"..\Código del programa\node_modules\electron\dist\electron.exe"`):
 - `test\probar.js`: cámara simulada; graba, edita, prueba el control Bluetooth, el arranque por giro y los perfiles. Deja los MP4 y capturas en `test\salida\funcional`.
+- `test\giro.js`: simula la cámara del iPhone (cuadros acostados, y un cambio a horizontal en medio) y revisa que el
+  clip quede vertical y derecho.
 - `test\ritmo.js`: el detector de pulso (120 BPM y una canción sin pulso), los cambios de velocidad sobre los golpes, la pausa y los filtros de color. Deja todo en `test\salida\ritmo` (`filtros.png` muestra los 7 filtros).
 - `test\jueces.js`: la prueba de calidad (ver arriba).
 

@@ -6,7 +6,7 @@ import {
 } from '../vendor/mediabunny.min.mjs';
 import { expandTimeline, outputSize } from './settings.js';
 import { Effect } from './effects.js';
-import { drawOverlay, ensureFontLoaded } from './overlay.js';
+import { drawOverlay, ensureFontLoaded, hasOverlay } from './overlay.js';
 import { pickVideoCodec } from './capture.js';
 import { buildMusicBuffer, decodeAudio, encodeAacInto, preparePassthrough, aacSupported } from './audio.js';
 import { detectBeats } from './beats.js';
@@ -168,7 +168,7 @@ function snapToBeats(timeline, clipFps, clipFrames, outFps, beats) {
 }
 
 // Filtros de color sobre la imagen de la cámara, con mezclas del canvas (rápidas en el iPhone).
-function applyLook(ctx, W, H, look, canvas) {
+export function applyLook(ctx, W, H, look, canvas) {
   if (!look || look === 'none') return;
   ctx.save();
   const fill = (op, color, alpha = 1) => { ctx.globalCompositeOperation = op; ctx.globalAlpha = alpha; ctx.fillStyle = color; ctx.fillRect(0, 0, W, H); };
@@ -268,7 +268,7 @@ export async function renderVideo(opts) {
   const dt = 1 / outFps;
   // La superposición (texto o PNG) no cambia en todo el video: se dibuja una vez y se pega en cada cuadro.
   let ovCanvas = null;
-  if (settings.overlay && settings.overlay.mode !== 'none') {
+  if (hasOverlay(settings.overlay)) {
     ovCanvas = document.createElement('canvas');
     ovCanvas.width = W; ovCanvas.height = H;
     drawOverlay(ovCanvas.getContext('2d'), W, H, settings.overlay, overlayImage);

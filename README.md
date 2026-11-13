@@ -39,6 +39,19 @@ Para probar en una computadora: `python3 -m http.server 8787` dentro de la carpe
 
 **Control Bluetooth**: un control tipo teclado o de presentaciones (Enter, espacio, flechas o Página arriba/abajo) empieza la grabación en la pantalla de grabar; si lo apretás mientras graba, la corta antes (mínimo 1 segundo). En la pantalla del resultado vuelve a la cámara ("Grabar otro"). Los controles que solo mandan "subir volumen" (los de selfie más baratos) no sirven desde Safari.
 
+## Novedades (noviembre 2026)
+
+- **Misma estética que Mi Fotocabina / Espejo**: fondo casi negro, rosa de acento, botones tipo pastilla y tarjetas
+  con degradé. El inicio muestra "Así va a quedar" (una imagen del último video con el filtro, el efecto, el texto,
+  los adornos y el marco) y tarjetas para ir directo a Texto e imágenes, Música, Velocidades, Efectos y Galería.
+- **Texto, adornos y marco a la vez** (Configuración → 4): un texto, varios adornos (corona, corazón, anillo… o una
+  imagen propia en PNG) y un marco PNG de pantalla completa. Cada cosa se toca en la vista previa y se arrastra; con
+  dos dedos se agranda o achica. Letras y colores se eligen con un toque.
+- **La cámara muestra el texto, los adornos y el marco antes de grabar**, tal como van a quedar.
+- **Galería en grilla**: miniaturas de los videos; tocando uno se ve, se comparte o se borra.
+- `test\recorrido.js`: hace el recorrido completo (cargar una canción, escribir el texto, sumar y arrastrar una
+  corona, cargar un marco, grabar, galería) y deja las capturas en `test\salida\recorrido`.
+
 ## Novedades (octubre 2026)
 
 - **Video girado en el iPhone, arreglado**: el iPhone entrega los cuadros de la cámara acostados (como los lee el

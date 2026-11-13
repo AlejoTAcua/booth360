@@ -1,9 +1,9 @@
 import { db } from './db.js';
 import { loadSettings, saveSettings, PRESETS, SPEEDS, FONTS, LOOKS, expandTimeline, finalDuration, outputSize } from './settings.js';
 import { support, openCamera, closeCamera, cameraSettings, recordClip } from './capture.js';
-import { renderVideo, compressClip, normalizeClip } from './render.js';
+import { renderVideo, compressClip, normalizeClip, FrameSource, applyLook } from './render.js';
 import { EFFECTS, Effect } from './effects.js';
-import { drawOverlay, ensureFontLoaded } from './overlay.js';
+import { drawOverlay, ensureFontLoaded, overlayParts } from './overlay.js';
 import { decodeAudio, waveformPeaks, audioContext } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
@@ -51,12 +51,25 @@ function renderSummary() {
   const passes = expandTimeline(s.timeline).map(p => `${p.speed}x${p.dir === 'rev' ? '↩' : ''}${p.hold ? ` ⏸${p.hold}s` : ''}`).join(' · ');
   const look = LOOKS.find((l) => l.id === (s.look || 'none'));
   const musicOn = state.tracks.filter(t => t.enabled !== false).length;
-  const ov = s.overlay.mode === 'text' ? `“${(s.overlay.text || '').split('\n')[0]}”` : s.overlay.mode === 'image' ? 'imagen PNG' : 'sin texto';
+  const parts = overlayParts(s.overlay);
+  const ovList = [];
+  if (parts.text && (s.overlay.text || '').trim()) ovList.push(`“${escapeHtml((s.overlay.text || '').split('\n')[0])}”`);
+  if (parts.stickers.length) ovList.push(parts.stickers.length === 1 ? '1 adorno' : `${parts.stickers.length} adornos`);
+  if (parts.image && s.overlay.imageId) ovList.push('marco');
+  const ov = ovList.join(' + ') || 'nada';
+  const preset = PRESETS.find((p) => p.id === s.timeline.preset);
   $('summary').innerHTML = `
-    <div><b>Grabación:</b> ${s.capture.seconds}s a ${s.capture.fps} fps · <b>Final:</b> ~${fmtSec(dur)}${dur > 30 ? ' <span class="warnText">· largo: tarda más en editarse y pesa más (ideal 15–25 s)</span>' : ''}</div>
+    <div><b>Graba</b> ${s.capture.seconds} s · <b>video</b> de ~${fmtSec(dur)}${dur > 30 ? ' <span class="warnText">· largo: tarda más en editarse (ideal 15–25 s)</span>' : ''}</div>
     <div><b>Velocidades:</b> ${passes}${s.timeline.smooth ? ' · suavizado' : ''}</div>
-    <div><b>Efecto:</b> ${fx ? fx.name : '-'} · <b>Filtro:</b> ${look ? look.name : 'Natural'} · <b>Texto:</b> ${ov}</div>
-    <div><b>Música:</b> ${musicOn ? `${musicOn} canción(es), ${s.music.mode === 'random' ? 'al azar' : 'en orden'}${s.music.beatSync !== false ? ', al ritmo' : ''}` : 'sin música'}</div>`;
+    <div><b>Efecto:</b> ${fx ? fx.name : '-'} · <b>Filtro:</b> ${look ? look.name : 'Natural'}</div>
+    <div><b>Encima:</b> ${ov}</div>
+    <div><b>Música:</b> ${musicOn ? `${musicOn} canción(es), ${s.music.mode === 'random' ? 'al azar' : 'en orden'}${s.music.beatSync !== false ? ', al ritmo' : ''}` : '<span class="warnText">sin música: agregá canciones</span>'}</div>`;
+  $('tOverlay').textContent = ov === 'nada' ? 'sin nada' : ov.replace(/&\w+;/g, '');
+  $('tMusic').textContent = musicOn ? (musicOn === 1 ? '1 canción' : `${musicOn} canciones`) : 'sin música';
+  $('tSpeed').textContent = preset ? preset.name : 'Personalizado';
+  $('tFx').textContent = `${fx ? fx.name : '-'}${look && look.id !== 'none' ? ' · ' + look.name : ''}`;
+  $('tGallery').textContent = 'tus videos';
+  if ($('screen-home').classList.contains('active')) drawHomePreview();
 }
 
 function checkSupport() {
@@ -173,6 +186,7 @@ async function goRecord() {
   updateMotionUi();
   $('renderCanvas').classList.add('hidden');
   $('cam').classList.remove('hidden');
+  drawCamOverlay();
   $('recCenter').textContent = ''; $('recStatus').textContent = ''; $('recBar').classList.remove('on');
   $('btnShutter').disabled = true;
   if (camOpening) return;
@@ -264,7 +278,7 @@ async function processClip(clip, from) {
   busy('Editando el video… 0%', 0, true);
   try {
     const res = await renderVideo({
-      clip, settings: s, overlayImage: await getOverlayImage(), endCard: await getEndCard(), music, canvas, signal: ctrl.signal,
+      clip, settings: s, overlayImage: await getOverlayAssets(), endCard: await getEndCard(), music, canvas, signal: ctrl.signal,
       onProgress: (p) => busy(`Editando el video… ${Math.round(p * 100)}%`, p, true),
     });
     state.lastResult = res;
@@ -305,6 +319,8 @@ function videoName(prefix) {
 
 function showResult(res, music) {
   if (!state.originalReady || state.originalReady.clip !== state.lastClip) { state.originalReady = null; $('btnSaveOriginal').textContent = 'Guardar original (comprimido)'; }
+  state.viewing = { blob: res.blob, name: res.name || videoName('360'), id: null };
+  $('btnResultDelete').classList.toggle('hidden', state.resultFrom !== 'gallery');
   const v = $('resultVideo');
   if (v.src) URL.revokeObjectURL(v.src);
   v.src = URL.createObjectURL(res.blob);
@@ -378,7 +394,7 @@ function windowLength() { return Math.max(1, finalDuration(state.settings.timeli
 function renderMusicList() {
   const list = $('musicList');
   list.innerHTML = '';
-  if (!state.tracks.length) { list.innerHTML = '<p class="muted small">Todavía no hay canciones.</p>'; return; }
+  if (!state.tracks.length) { list.innerHTML = '<p class="muted small">Todavía no hay canciones: tocá “Agregar canción” y elegí un MP3 o M4A guardado en Archivos.</p>'; return; }
   for (const t of state.tracks) {
     const el = document.createElement('div'); el.className = 'track';
     el.innerHTML = `
@@ -394,10 +410,10 @@ function renderMusicList() {
       ctx.clearRect(0, 0, W, H);
       const winLen = windowLength(); const dur = t.duration || 1;
       const x0 = (t.start || 0) / dur * W, x1 = Math.min(W, ((t.start || 0) + winLen) / dur * W);
-      ctx.fillStyle = '#39314f'; ctx.fillRect(x0, 0, x1 - x0, H);
+      ctx.fillStyle = '#ff3d7f33'; ctx.fillRect(x0, 0, x1 - x0, H);
       for (let i = 0; i < peaks.length; i++) {
         const x = i / peaks.length * W; const h = Math.max(1, peaks[i] * (H - 4));
-        ctx.fillStyle = x >= x0 && x <= x1 ? '#ec4899' : '#6b6283';
+        ctx.fillStyle = x >= x0 && x <= x1 ? '#ff3d7f' : '#5c5c70';
         ctx.fillRect(x, (H - h) / 2, Math.max(1, W / peaks.length - 0.5), h);
       }
       pos.textContent = `Desde ${fmtSec(t.start || 0)} · tramo de ${fmtSec(winLen)} · canción ${fmtSec(dur)}`;
@@ -459,7 +475,7 @@ const PKEY = 'booth360.profiles.v1';
 function loadProfiles() { try { return JSON.parse(localStorage.getItem(PKEY) || '{}') || {}; } catch (e) { return {}; } }
 function assetInProfiles(id) {
   if (!id) return false;
-  return Object.values(loadProfiles()).some((p) => (p.overlay && p.overlay.imageId === id) || (p.endCard && p.endCard.imageId === id));
+  return Object.values(loadProfiles()).some((p) => (p.overlay && (p.overlay.imageId === id || (p.overlay.stickers || []).some((st) => st.assetId === id))) || (p.endCard && p.endCard.imageId === id));
 }
 function renderProfiles() {
   const p = loadProfiles();
@@ -505,35 +521,160 @@ function bindProfiles() {
   };
 }
 
-// ---------- superposición ----------
-async function getOverlayImage() {
+// ---------- superposición (marco + adornos + texto) ----------
+const STICKERS = ['👑', '💍', '❤️', '⭐', '✨', '🎉', '🥂', '🎂', '🎓', '🌸', '🦋', '🎈'];
+const TEXT_COLORS = ['#ffffff', '#f5c542', '#d9a3ff', '#ff3d7f', '#7fe3ff', '#b7f5c5', '#000000'];
+// Imágenes ya abiertas (marco y adornos), por id. Se cierran las que ya no se usan.
+async function getOverlayAssets() {
   const o = state.settings.overlay;
-  if (o.mode !== 'image' || !o.imageId) return null;
-  if (state.overlayImage && state.overlayImage.id === o.imageId) return state.overlayImage.bmp;
-  const a = await db.get('assets', o.imageId);
-  if (!a) return null;
-  const bmp = await createImageBitmap(a.blob);
-  if (state.overlayImage) { try { state.overlayImage.bmp.close(); } catch (e) { /* */ } }
-  state.overlayImage = { id: o.imageId, bmp };
-  return bmp;
+  const parts = overlayParts(o);
+  const want = new Set();
+  if (parts.image && o.imageId) want.add(o.imageId);
+  for (const st of parts.stickers) if (st.assetId) want.add(st.assetId);
+  state.bmps ||= new Map();
+  for (const [id, bmp] of state.bmps) if (!want.has(id)) { try { bmp.close(); } catch (e) { /* */ } state.bmps.delete(id); }
+  for (const id of want) {
+    if (state.bmps.has(id)) continue;
+    try { const a = await db.get('assets', id); if (a) state.bmps.set(id, await createImageBitmap(a.blob)); } catch (e) { console.warn(e); }
+  }
+  return { image: (parts.image && state.bmps.get(o.imageId)) || null, stickers: state.bmps };
 }
-let ovPreviewFx = null;
-async function drawOverlayPreview() {
-  const c = $('ovPreview'); const ctx = c.getContext('2d'); const W = c.width, H = c.height;
-  const g = ctx.createLinearGradient(0, 0, W, H); g.addColorStop(0, '#3a2a55'); g.addColorStop(1, '#1b1230');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-  ctx.fillStyle = 'rgba(255,255,255,.08)'; ctx.beginPath(); ctx.ellipse(W / 2, H * 0.55, W * 0.22, H * 0.3, 0, 0, Math.PI * 2); ctx.fill();
-  if (!ovPreviewFx || ovPreviewFx.type !== state.settings.effects.type) ovPreviewFx = new Effect(state.settings.effects.type, { intensity: state.settings.effects.intensity, color: state.settings.effects.color, seed: 3 });
-  for (let i = 0; i < 20; i++) ovPreviewFx.render(ctx, W, H, 1 / 30);
-  await ensureFontLoaded(state.settings.overlay, H);
-  drawOverlay(ctx, W, H, state.settings.overlay, await getOverlayImage());
+// Para que el modo viejo ("text" / "image" / "none") siga diciendo lo mismo que los interruptores nuevos.
+function syncOverlayMode() {
+  const o = state.settings.overlay;
+  o.mode = o.textOn ? 'text' : o.imageOn ? 'image' : (o.stickers || []).length ? 'stickers' : 'none';
+}
+// Un cuadro del último video (o del video de prueba) para ver el texto y los adornos sobre una imagen real.
+let pvFrame = null; // { key, job }
+function previewFrame() {
+  const pick = async () => state.lastClip || (await db.get('assets', 'testclip').catch(() => null));
+  return pick().then((clip) => {
+    if (!clip || !clip.blob) return null;
+    const key = `${clip.blob.size}:${clip.seconds}:${clip.fps}`;
+    if (pvFrame && pvFrame.key === key) return pvFrame.job;
+    const job = (async () => {
+      const src = await FrameSource.open(clip.blob, clip.fps);
+      const r = src.reader(1);
+      try { const f = await r.get(Math.floor(src.count / 2)); return f ? await createImageBitmap(f) : null; } finally { r.close(); src.close(); }
+    })().catch((e) => { console.warn('vista previa', e); return null; });
+    pvFrame = { key, job };
+    return job;
+  });
+}
+// Dibuja "así va a quedar": imagen de fondo con el filtro, el efecto y todo lo superpuesto. Devuelve dónde quedó cada cosa.
+async function drawScene(c) {
+  const s = state.settings;
+  const W = c.width, H = c.height;
+  const [bmp, assets] = await Promise.all([previewFrame(), getOverlayAssets()]);
+  await ensureFontLoaded(s.overlay, H);
+  const ctx = c.getContext('2d');
+  if (bmp) {
+    const k = Math.max(W / bmp.width, H / bmp.height);
+    ctx.drawImage(bmp, (W - bmp.width * k) / 2, (H - bmp.height * k) / 2, bmp.width * k, bmp.height * k);
+    try { applyLook(ctx, W, H, s.look, c); } catch (e) { /* */ }
+  } else {
+    const g = ctx.createLinearGradient(0, 0, W, H); g.addColorStop(0, '#3b1d4f'); g.addColorStop(1, '#141428');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(255,255,255,.1)';
+    ctx.beginPath(); ctx.arc(W / 2, H * 0.36, W * 0.11, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(W / 2, H * 0.66, W * 0.2, H * 0.2, 0, 0, Math.PI * 2); ctx.fill();
+  }
+  try {
+    const fx = new Effect(s.effects.type, { intensity: s.effects.intensity, color: s.effects.color, seed: 3 });
+    for (let i = 0; i < 20; i++) fx.render(ctx, W, H, 1 / 30);
+  } catch (e) { /* */ }
+  ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.shadowColor = 'transparent'; // (los efectos dejan el pincel en modo "luz")
+  return drawOverlay(ctx, W, H, s.overlay, assets);
+}
+let ovSel = null; // lo elegido en la vista previa: 'text', el id de un adorno o null
+let ovBoxes = [];
+let ovDrawing = null, ovAgain = false;
+// (si llegan muchos pedidos juntos, por ejemplo al arrastrar, se dibuja el último y no se pisan entre sí)
+function drawOverlayPreview() {
+  if (ovDrawing) { ovAgain = true; return ovDrawing; }
+  ovDrawing = (async () => {
+    do {
+      ovAgain = false;
+      const c = $('ovPreview');
+      ovBoxes = await drawScene(c);
+      const b = ovBoxes.find((x) => x.id === ovSel);
+      if (b) {
+        const ctx = c.getContext('2d');
+        ctx.save(); ctx.setLineDash([8, 6]); ctx.lineWidth = 2.5; ctx.strokeStyle = '#ff3d7f';
+        ctx.strokeRect(b.x - 6, b.y - 6, b.w + 12, b.h + 12); ctx.restore();
+      }
+    } while (ovAgain);
+    ovDrawing = null;
+  })();
+  return ovDrawing;
+}
+function drawHomePreview() { drawScene($('homePreview')).catch(() => {}); }
+function drawCamOverlay() {
+  const c = $('camOverlay'); const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+  const o = state.settings.overlay;
+  Promise.all([getOverlayAssets(), ensureFontLoaded(o, c.height)]).then(([assets]) => { ctx.clearRect(0, 0, c.width, c.height); drawOverlay(ctx, c.width, c.height, o, assets); }).catch(() => {});
+}
+function stickerById(id) { return (state.settings.overlay.stickers || []).find((st) => st.id === id) || null; }
+function selectOverlayItem(id) {
+  ovSel = id;
+  const st = id && id !== 'text' ? stickerById(id) : null;
+  $('ovSel').classList.toggle('hidden', !st);
+  if (st) {
+    $('ovSelName').textContent = st.emoji ? `Adorno elegido: ${st.emoji}` : 'Adorno elegido: tu imagen';
+    $('ovSelSize').value = Math.round((st.size || 0.25) * 100);
+  }
+}
+async function removeSticker(id) {
+  const o = state.settings.overlay;
+  const st = stickerById(id);
+  if (!st) return;
+  o.stickers = o.stickers.filter((x) => x.id !== id);
+  if (st.assetId && !assetInProfiles(st.assetId) && !o.stickers.some((x) => x.assetId === st.assetId)) { try { await db.del('assets', st.assetId); } catch (e) { /* */ } }
+  syncOverlayMode(); selectOverlayItem(null); save(); drawOverlayPreview();
+}
+function addSticker(st) {
+  const o = state.settings.overlay;
+  o.stickers = [...(o.stickers || []), { id: db.uid(), x: 0.5, y: 0.3, size: 0.25, ...st }];
+  syncOverlayMode(); save();
+  selectOverlayItem(o.stickers[o.stickers.length - 1].id);
+  drawOverlayPreview();
 }
 function bindOverlayDrag() {
-  const c = $('ovPreview'); let dragging = false;
-  const upd = (ev) => { const r = c.getBoundingClientRect(); state.settings.overlay.x = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)); state.settings.overlay.y = Math.max(0, Math.min(1, (ev.clientY - r.top) / r.height)); drawOverlayPreview(); };
-  c.addEventListener('pointerdown', (ev) => { if (state.settings.overlay.mode !== 'text') return; dragging = true; c.setPointerCapture(ev.pointerId); upd(ev); });
-  c.addEventListener('pointermove', (ev) => { if (dragging) upd(ev); });
-  c.addEventListener('pointerup', () => { if (dragging) { dragging = false; save(); } });
+  const c = $('ovPreview');
+  const pts = new Map();
+  let drag = null, pinch = null;
+  const pos = (ev) => { const r = c.getBoundingClientRect(); return { x: (ev.clientX - r.left) / r.width, y: (ev.clientY - r.top) / r.height }; };
+  const dist = () => { const [a, b] = [...pts.values()]; return Math.hypot(a.x - b.x, (a.y - b.y) * 16 / 9) || 0.001; };
+  const item = (id) => (id === 'text' ? state.settings.overlay : stickerById(id));
+  c.addEventListener('pointerdown', (ev) => {
+    try { c.setPointerCapture(ev.pointerId); } catch (e) { /* */ }
+    const p = pos(ev); pts.set(ev.pointerId, p);
+    if (pts.size === 2 && ovSel && item(ovSel)) { drag = null; pinch = { d0: dist(), s0: ovSel === 'text' ? state.settings.overlay.size : item(ovSel).size || 0.25 }; return; }
+    const W = c.width, H = c.height, pad = 14;
+    const hit = [...ovBoxes].reverse().find((b) => p.x * W >= b.x - pad && p.x * W <= b.x + b.w + pad && p.y * H >= b.y - pad && p.y * H <= b.y + b.h + pad);
+    selectOverlayItem(hit ? hit.id : null);
+    const it = hit && item(hit.id);
+    drag = it ? { id: hit.id, dx: (it.x ?? 0.5) - p.x, dy: (it.y ?? 0.5) - p.y } : null;
+    drawOverlayPreview();
+  });
+  c.addEventListener('pointermove', (ev) => {
+    if (!pts.has(ev.pointerId)) return;
+    const p = pos(ev); pts.set(ev.pointerId, p);
+    if (pinch && pts.size === 2) {
+      const k = dist() / pinch.d0;
+      if (ovSel === 'text') { state.settings.overlay.size = Math.round(Math.max(40, Math.min(260, pinch.s0 * k))); $('ovSize').value = state.settings.overlay.size; }
+      else { const st = item(ovSel); if (st) { st.size = Math.max(0.05, Math.min(1, pinch.s0 * k)); $('ovSelSize').value = Math.round(st.size * 100); } }
+      drawOverlayPreview();
+    } else if (drag) {
+      const it = item(drag.id); if (!it) return;
+      it.x = Math.max(0, Math.min(1, p.x + drag.dx)); it.y = Math.max(0, Math.min(1, p.y + drag.dy));
+      drawOverlayPreview();
+    }
+  });
+  const end = (ev) => { pts.delete(ev.pointerId); pinch = null; if (!pts.size) { if (drag) save(); drag = null; } };
+  c.addEventListener('pointerup', end);
+  c.addEventListener('pointercancel', end);
 }
 
 // ---------- línea de tiempo ----------
@@ -595,31 +736,53 @@ function bindSettings() {
   const renderFx = () => { fxBox.innerHTML = ''; for (const e of EFFECTS) { const b = document.createElement('button'); b.className = 'chip' + (s.effects.type === e.id ? ' on' : ''); b.textContent = e.name; b.onclick = () => { s.effects.type = e.id; save(); renderFx(); drawOverlayPreview(); }; fxBox.appendChild(b); } };
   renderFx();
   const lookBox = $('lookChips');
-  const renderLooks = () => { lookBox.innerHTML = ''; for (const l of LOOKS) { const b = document.createElement('button'); b.className = 'chip' + ((s.look || 'none') === l.id ? ' on' : ''); b.textContent = l.name; b.onclick = () => { s.look = l.id; save(); renderLooks(); }; lookBox.appendChild(b); } };
+  const renderLooks = () => { lookBox.innerHTML = ''; for (const l of LOOKS) { const b = document.createElement('button'); b.className = 'chip' + ((s.look || 'none') === l.id ? ' on' : ''); b.textContent = l.name; b.onclick = () => { s.look = l.id; save(); renderLooks(); drawOverlayPreview(); }; lookBox.appendChild(b); } };
   renderLooks();
-  $('fxIntensity').value = s.effects.intensity; $('fxIntensity').oninput = (e) => { s.effects.intensity = +e.target.value; ovPreviewFx = null; save(); drawOverlayPreview(); };
-  $('fxColor').value = s.effects.color; $('fxColor').oninput = (e) => { s.effects.color = e.target.value; ovPreviewFx = null; save(); drawOverlayPreview(); };
+  $('fxIntensity').value = s.effects.intensity; $('fxIntensity').oninput = (e) => { s.effects.intensity = +e.target.value; save(); drawOverlayPreview(); };
+  $('fxColor').value = s.effects.color; $('fxColor').oninput = (e) => { s.effects.color = e.target.value; save(); drawOverlayPreview(); };
 
-  // superposición
-  const modes = [['text', 'Texto'], ['image', 'Imagen PNG'], ['none', 'Nada']];
-  const mb = $('overlayModeChips');
-  const renderModes = () => { mb.innerHTML = ''; for (const [id, name] of modes) { const b = document.createElement('button'); b.className = 'chip' + (s.overlay.mode === id ? ' on' : ''); b.textContent = name; b.onclick = () => { s.overlay.mode = id; save(); renderModes(); drawOverlayPreview(); }; mb.appendChild(b); }
-    $('overlayText').classList.toggle('hidden', s.overlay.mode !== 'text'); $('overlayImage').classList.toggle('hidden', s.overlay.mode !== 'image'); };
-  renderModes();
-  $('ovText').value = s.overlay.text; $('ovText').oninput = (e) => { s.overlay.text = e.target.value; save(); drawOverlayPreview(); };
-  $('ovEmoji').value = s.overlay.emoji || ''; $('ovEmoji').oninput = (e) => { s.overlay.emoji = e.target.value; save(); drawOverlayPreview(); };
-  const fsel = $('ovFont'); fsel.innerHTML = FONTS.map(f => `<option value="${f.id}">${f.label}</option>`).join(''); fsel.value = s.overlay.font; fsel.onchange = (e) => { s.overlay.font = e.target.value; save(); drawOverlayPreview(); };
-  $('ovSize').value = s.overlay.size; $('ovSize').oninput = (e) => { s.overlay.size = +e.target.value; save(); drawOverlayPreview(); };
-  $('ovColor').value = s.overlay.color; $('ovColor').oninput = (e) => { s.overlay.color = e.target.value; save(); drawOverlayPreview(); };
-  $('ovShadow').checked = s.overlay.shadow; $('ovShadow').onchange = (e) => { s.overlay.shadow = e.target.checked; save(); drawOverlayPreview(); };
-  $('ovStroke').checked = s.overlay.stroke; $('ovStroke').onchange = (e) => { s.overlay.stroke = e.target.checked; save(); drawOverlayPreview(); };
+  // superposición: texto, adornos y marco (todo junto)
+  const o = s.overlay;
+  const parts0 = overlayParts(o);
+  o.textOn = parts0.text; o.imageOn = parts0.image; o.stickers = parts0.stickers;
+  const showParts = () => { $('overlayText').classList.toggle('hidden', !o.textOn); $('ovTextOn').checked = !!o.textOn; $('ovImageOn').checked = !!o.imageOn; };
+  const changed = () => { syncOverlayMode(); save(); showParts(); drawOverlayPreview(); };
+  showParts();
+  $('ovTextOn').onchange = (e) => { o.textOn = e.target.checked; changed(); };
+  $('ovImageOn').onchange = (e) => { o.imageOn = e.target.checked; if (o.imageOn && !o.imageId) toast('Elegí el PNG del marco'); changed(); };
+  $('ovText').value = o.text; $('ovText').oninput = (e) => { o.text = e.target.value; if (!o.textOn && o.text.trim()) o.textOn = true; changed(); };
+  const fsel = $('ovFont'); fsel.innerHTML = FONTS.map(f => `<option value="${f.id}">${f.label}</option>`).join(''); fsel.value = o.font;
+  const fontBox = $('ovFontChips');
+  const renderFonts = () => { fontBox.innerHTML = ''; for (const f of FONTS) { const b = document.createElement('button'); b.className = 'chip' + (o.font === f.id ? ' on' : ''); b.textContent = f.id === 'system-ui' ? 'Simple' : f.id; b.style.fontFamily = `"${f.id}", system-ui`; b.onclick = () => { o.font = f.id; fsel.value = f.id; renderFonts(); changed(); }; fontBox.appendChild(b); } };
+  renderFonts();
+  fsel.onchange = (e) => { o.font = e.target.value; renderFonts(); changed(); };
+  $('ovSize').value = o.size; $('ovSize').oninput = (e) => { o.size = +e.target.value; changed(); };
+  const colorBox = $('ovColorChips');
+  const renderColors = () => { colorBox.innerHTML = ''; for (const col of TEXT_COLORS) { const b = document.createElement('button'); b.className = 'chip' + ((o.color || '').toLowerCase() === col ? ' on' : ''); b.style.background = col; b.title = col; b.onclick = () => { o.color = col; $('ovColor').value = col; renderColors(); changed(); }; colorBox.appendChild(b); } };
+  renderColors();
+  $('ovColor').value = o.color; $('ovColor').oninput = (e) => { o.color = e.target.value; renderColors(); changed(); };
+  $('ovShadow').checked = o.shadow; $('ovShadow').onchange = (e) => { o.shadow = e.target.checked; changed(); };
+  $('ovStroke').checked = o.stroke; $('ovStroke').onchange = (e) => { o.stroke = e.target.checked; changed(); };
+  // adornos
+  const stBox = $('stickerChips');
+  for (const em of STICKERS) { const b = document.createElement('button'); b.className = 'chip'; b.textContent = em; b.onclick = () => addSticker({ emoji: em }); stBox.appendChild(b); }
+  $('stickerFile').onchange = async (e) => {
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+    try {
+      const id = db.uid(); await db.put('assets', { id, kind: 'image', name: f.name, blob: f, created: Date.now() });
+      addSticker({ assetId: id, size: 0.4 });
+    } catch (err) { console.error(err); toast('No se pudo agregar esa imagen'); }
+  };
+  $('ovSelSize').oninput = (e) => { const st = stickerById(ovSel); if (st) { st.size = +e.target.value / 100; save(); drawOverlayPreview(); } };
+  $('ovSelDel').onclick = () => removeSticker(ovSel);
+  // marco de pantalla completa
   $('ovImageFile').onchange = async (e) => {
     const f = e.target.files[0]; if (!f) return;
-    if (s.overlay.imageId && !assetInProfiles(s.overlay.imageId)) { try { await db.del('assets', s.overlay.imageId); } catch (err) { /* */ } }
+    if (o.imageId && !assetInProfiles(o.imageId)) { try { await db.del('assets', o.imageId); } catch (err) { /* */ } }
     const id = db.uid(); await db.put('assets', { id, kind: 'image', name: f.name, blob: f, created: Date.now() });
-    s.overlay.imageId = id; state.overlayImage = null; save(); updateImageInfo(); drawOverlayPreview();
+    o.imageId = id; o.imageOn = true; e.target.value = ''; updateImageInfo(); changed();
   };
-  const updateImageInfo = async () => { const a = s.overlay.imageId ? await db.get('assets', s.overlay.imageId) : null; $('ovImageInfo').textContent = a ? `Imagen: ${a.name} (${fmtBytes(a.blob.size)})` : 'Sin imagen cargada.'; };
+  const updateImageInfo = async () => { const a = o.imageId ? await db.get('assets', o.imageId) : null; $('ovImageInfo').textContent = a ? `Marco: ${a.name} (${fmtBytes(a.blob.size)})` : 'Todavía no elegiste un marco.'; };
   updateImageInfo();
   bindOverlayDrag();
 
@@ -692,17 +855,23 @@ async function renderGallery() {
   const list = $('galleryList'); list.innerHTML = '';
   const vids = (await db.all('videos')).sort((a, b) => b.created - a.created);
   const u = await db.usage();
-  $('storageInfo').textContent = `${vids.length} video(s) · ${fmtBytes(vids.reduce((a, v) => a + (v.size || 0), 0))}${u ? ` · espacio usado por la app ${fmtBytes(u.usage || 0)}` : ''}`;
-  if (!vids.length) { list.innerHTML = '<p class="muted">Todavía no hay videos guardados.</p>'; return; }
+  $('storageInfo').textContent = `${vids.length} video(s) · ${fmtBytes(vids.reduce((a, v) => a + (v.size || 0), 0))}${u ? ` · espacio usado por la app ${fmtBytes(u.usage || 0)}` : ''}${vids.length ? ' · tocá un video para verlo, compartirlo o borrarlo' : ''}`;
+  if (!vids.length) { list.innerHTML = '<p class="muted">Todavía no hay videos guardados. Los que grabes aparecen acá.</p>'; return; }
   for (const v of vids) {
-    const el = document.createElement('div'); el.className = 'gitem';
-    el.innerHTML = `<video muted playsinline preload="metadata"></video><div class="meta"><div class="n">${escapeHtml(v.name)}</div><div class="muted small">${new Date(v.created).toLocaleString()} · ${v.kind === 'original' ? 'original' : 'editado'} · ${fmtSec(v.duration || 0)} · ${fmtBytes(v.size || 0)}</div>
-      <div class="row"><button class="btn small primary sh">Compartir</button><button class="btn small pl">Ver</button><button class="btn small danger del">Borrar</button></div></div>`;
+    const el = document.createElement('button'); el.className = 'gitem';
+    const d = new Date(v.created); const p2 = (n) => String(n).padStart(2, '0');
+    el.innerHTML = `<video muted playsinline preload="metadata"></video>${v.kind === 'original' ? '<span class="tag">original</span>' : ''}<span class="meta">${p2(d.getDate())}/${p2(d.getMonth() + 1)} ${p2(d.getHours())}:${p2(d.getMinutes())} · ${fmtSec(v.duration || 0)}</span>`;
+    el.title = v.name;
     list.appendChild(el);
-    const vid = el.querySelector('video'); vid.src = URL.createObjectURL(v.blob); galleryUrls.push(vid.src);
-    el.querySelector('.sh').onclick = () => shareBlob(v.blob, v.name + '.mp4');
-    el.querySelector('.pl').onclick = () => { state.resultFrom = 'gallery'; showResult({ blob: v.blob, duration: v.duration || 0, width: '', height: '' }, null); $('resultInfo').textContent = `${v.name} · ${fmtBytes(v.size || 0)}`; $('btnAgain').textContent = 'Volver a la galería'; };
-    el.querySelector('.del').onclick = async () => { if (!confirm(`¿Borrar “${v.name}”?`)) return; await db.del('videos', v.id); renderGallery(); };
+    const url = URL.createObjectURL(v.blob); galleryUrls.push(url);
+    el.querySelector('video').src = url + '#t=0.1'; // (el iPhone muestra la primera imagen solo si se le pide un momento del video)
+    el.onclick = () => {
+      state.resultFrom = 'gallery';
+      showResult({ blob: v.blob, duration: v.duration || 0, width: '', height: '', name: v.name }, null);
+      state.viewing.id = v.id;
+      $('resultInfo').textContent = `${v.name} · ${d.toLocaleString()} · ${fmtBytes(v.size || 0)}`;
+      $('btnAgain').textContent = 'Volver a la galería';
+    };
   }
 }
 
@@ -714,14 +883,32 @@ async function init() {
   db.persist();
   await loadTracks();
   const s = state.settings;
+  if (s.overlay.emoji && s.overlay.emoji.trim() && overlayParts(s.overlay).text) {
+    const o = s.overlay;
+    const lines = Math.max(1, (o.text || '').trim().split('\n').length);
+    const up = ((o.size || 100) * (lines * 1.1 + 0.9)) / 2 / 1280;
+    o.stickers = [...(o.stickers || []), { id: db.uid(), emoji: o.emoji.trim(), x: o.x ?? 0.5, y: Math.max(0.06, (o.y ?? 0.8) - up - 0.01), size: Math.max(0.1, ((o.size || 100) * 0.8) / 720) }];
+    o.emoji = '';
+    saveSettings(s);
+  }
   $('eventName').value = s.eventName; $('eventName').oninput = (e) => { s.eventName = e.target.value; save(); };
   $('btnGoRecord').onclick = goRecord;
-  $('btnSettings').onclick = () => { show('screen-settings'); drawOverlayPreview(); };
-  $('btnSettingsBack').onclick = () => { show('screen-home'); renderSummary(); };
+  const openSettings = (sec) => {
+    show('screen-settings');
+    if (sec) {
+      document.querySelectorAll('#screen-settings details.card').forEach((d) => { d.open = d.id === sec; });
+      const el = $(sec); if (el) setTimeout(() => el.scrollIntoView({ block: 'start' }), 30);
+    }
+    drawOverlayPreview();
+  };
+  $('btnSettings').onclick = () => openSettings(null);
+  document.querySelectorAll('.tile[data-sec]').forEach((t) => { t.onclick = () => openSettings(t.dataset.sec); });
+  $('btnHomePreview').onclick = () => openSettings('sec-overlay');
+  $('btnSettingsBack').onclick = () => { selectOverlayItem(null); show('screen-home'); renderSummary(); };
   $('btnGallery').onclick = () => { renderGallery(); show('screen-gallery'); };
-  $('btnGalleryBack').onclick = () => { releaseGallery(); $('galleryList').innerHTML = ''; show('screen-home'); };
+  $('btnGalleryBack').onclick = () => { releaseGallery(); $('galleryList').innerHTML = ''; show('screen-home'); renderSummary(); };
   const workBusy = () => recording || !!state.abort;
-  $('btnRecBack').onclick = () => { if (workBusy()) return toast('Esperá a que termine'); stopCamera(); show('screen-home'); };
+  $('btnRecBack').onclick = () => { if (workBusy()) return toast('Esperá a que termine'); stopCamera(); show('screen-home'); renderSummary(); };
   $('btnShutter').onclick = startCountdownAndRecord;
   $('btnMotion').onclick = () => enableMotion(!s.capture.motionStart);
   // Control remoto Bluetooth (tipo teclado o de presentaciones): empieza a grabar, y mientras graba corta antes.
@@ -741,7 +928,14 @@ async function init() {
     }
   });
   $('btnFlip').onclick = async () => { if (workBusy()) return; s.capture.facing = s.capture.facing === 'environment' ? 'user' : 'environment'; save(); await goRecord(); };
-  $('btnShare').onclick = () => state.lastResult && shareBlob(state.lastResult.blob, videoName('360') + '.mp4');
+  $('btnShare').onclick = () => state.viewing && shareBlob(state.viewing.blob, state.viewing.name + '.mp4');
+  $('btnResultDelete').onclick = async () => {
+    const v = state.viewing;
+    if (!v || !v.id || !confirm(`¿Borrar “${v.name}”? No se puede deshacer.`)) return;
+    $('resultVideo').pause();
+    await db.del('videos', v.id);
+    renderGallery(); show('screen-gallery');
+  };
   $('btnSaveOriginal').onclick = async () => {
     if (!state.lastClip) return;
     const ready = state.originalReady;
@@ -762,7 +956,7 @@ async function init() {
     else if (state.resultFrom === 'gallery') { renderGallery(); show('screen-gallery'); }
     else show('screen-settings');
   };
-  $('btnResultBack').onclick = () => { $('resultVideo').pause(); stopCamera(); show('screen-home'); };
+  $('btnResultBack').onclick = () => { $('resultVideo').pause(); stopCamera(); show('screen-home'); renderSummary(); };
   $('btnBusyCancel').onclick = () => { if (state.abort) state.abort.abort(); };
   renderPresets(); renderSegments(); bindSettings(); bindProfiles(); renderMusicList(); renderSummary(); checkSupport();
   window.__booth = state; // para depuración
